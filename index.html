@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TiDB Cluster Sizing Estimator</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                    colors: {
+                        'primary': '#0097a7', // Teal color for TiDB theme
+                        'secondary': '#f4f4f4',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* Custom scrollbar for a cleaner look */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #ccc; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #a8a8a8; }
+
+        .card {
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            transition: transform 0.3s ease;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 font-sans min-h-screen p-4 sm:p-8">
+
+    <div class="max-w-4xl mx-auto">
+        <header class="text-center mb-10">
+            <h1 class="text-4xl font-extrabold text-primary mb-2">TiDB Cluster Sizing Calculator</h1>
+            <p class="text-gray-600">Estimate TiKV, TiDB, and TiFlash node counts based on data size and expected QPS.</p>
+        </header>
+
+        <div id="app-container" class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+
+            <!-- Input Parameters Card -->
+            <div class="lg:col-span-1 card bg-white p-6 rounded-xl border border-gray-200">
+                <h2 class="text-2xl font-semibold mb-6 text-gray-800 border-b pb-3">1. Input Parameters</h2>
+
+                <!-- Data Volume Input -->
+                <div class="mb-5">
+                    <label for="dumpSize" class="block text-sm font-medium text-gray-700">MySQL Dump Size (TiB)</label>
+                    <input type="number" id="dumpSize" value="12" min="0" step="0.1"
+                           oninput="calculate()"
+                           class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-primary focus:border-primary transition duration-150">
+                    <p class="text-xs text-gray-500 mt-1">Total size of your raw InnoDB data.</p>
+                </div>
+
+                <!-- Expected QPS Input -->
+                <div class="mb-5">
+                    <label for="expectedQPS" class="block text-sm font-medium text-gray-700">Expected Overall Performance (QPS)</label>
+                    <input type="number" id="expectedQPS" value="50000" min="1" step="100"
+                           oninput="calculate()"
+                           class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-primary focus:border-primary transition duration-150">
+                </div>
+
+                <!-- Workload Type -->
+                <div class="mb-5">
+                    <label for="workloadType" class="block text-sm font-medium text-gray-700">Workload Type</label>
+                    <select id="workloadType" onchange="calculate()"
+                            class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-primary focus:border-primary transition duration-150 bg-white">
+                        <option value="Mixed">Mixed (Default)</option>
+                        <option value="Read">Read</option>
+                        <option value="Write">Write</option>
+                    </select>
+                </div>
+
+                <!-- Latency Target -->
+                <div class="mb-5">
+                    <label for="latencyTarget" class="block text-sm font-medium text-gray-700">Latency Target</label>
+                    <select id="latencyTarget" onchange="calculate()"
+                            class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-primary focus:border-primary transition duration-150 bg-white">
+                        <option value="P95_100">P95 $\approx$ 100ms</option>
+                        <option value="P99_300">P99 $\approx$ 300ms</option>
+                        <option value="P99_100">P99 $\approx$ 100ms</option>
+                    </select>
+                </div>
+
+                <!-- Node Size Selector -->
+                <div class="mb-5">
+                    <label for="nodeSize" class="block text-sm font-medium text-gray-700">Node Size</label>
+                    <select id="nodeSize" onchange="calculate()"
+                            class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-primary focus:border-primary transition duration-150 bg-white">
+                        <option value="8c">8 vCPU / 32 GiB (Base Performance)</option>
+                        <option value="16c">16 vCPU / 64 GiB (Approx. 2x Performance)</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Results Section (TiKV, TiDB, TiFlash) -->
+            <div class="lg:col-span-2 space-y-8">
+
+                <!-- TiKV Sizing Card -->
+                <div class="card bg-white p-6 rounded-xl border border-gray-200">
+                    <h2 class="text-2xl font-semibold mb-4 text-primary">2. TiKV Node Sizing</h2>
+
+                    <div class="space-y-4 text-sm text-gray-700">
+                        <h3 class="font-bold text-lg text-gray-800">Estimate by Data Volume</h3>
+                        <div class="bg-secondary p-3 rounded-lg">
+                            <p>Formula: $\lceil \text{Dump Size} \times 0.4 \times 3 \div 0.8 \div 4 \div 3 \rceil \times 3$</p>
+                            <p class="mt-2" id="tikv-data-formula"></p>
+                            <p class="mt-2 font-semibold">Recommended TiKV Nodes (Data Volume): <span id="tikv-data-result" class="text-primary text-xl ml-2">...</span></p>
+                        </div>
+
+                        <h3 class="font-bold text-lg text-gray-800 pt-4">Estimate by Performance (QPS)</h3>
+                        <div class="bg-secondary p-3 rounded-lg">
+                            <p>Performance (8c/32GiB Base) $\rightarrow$ <span id="tikv-qps-base" class="font-mono text-primary">...</span> QPS</p>
+                            <p>Adjusted Performance (Selected Size) $\rightarrow$ <span id="tikv-qps-adjusted" class="font-mono text-primary">...</span> QPS</p>
+                            <p class="mt-2">Formula: $\lceil \text{Expected QPS} \div \text{Adjusted QPS per Node} \rceil$</p>
+                            <p class="mt-2" id="tikv-qps-formula"></p>
+                            <p class="mt-2 font-semibold">Recommended TiKV Nodes (Performance): <span id="tikv-perf-result" class="text-primary text-xl ml-2">...</span></p>
+                            <p class="text-xs text-gray-500 mt-1">*Final node count is rounded up to the nearest multiple of 3 for 3 AZ deployment.</p>
+                        </div>
+
+                        <h3 class="font-bold text-lg text-gray-800 pt-4">Final TiKV Node Count</h3>
+                        <p class="bg-green-100 p-3 rounded-lg font-bold text-green-700 text-xl text-center">
+                            Final TiKV Nodes: <span id="tikv-final-result" class="text-3xl ml-2">...</span>
+                        </p>
+                    </div>
+                </div>
+
+                <!-- TiDB and TiFlash Sizing Card -->
+                <div class="card bg-white p-6 rounded-xl border border-gray-200">
+                    <h2 class="text-2xl font-semibold mb-4 text-primary">3. TiDB & TiFlash Node Sizing</h2>
+
+                    <!-- TiDB Sizing -->
+                    <h3 class="font-bold text-lg text-gray-800 border-b pb-2 mb-3">TiDB Node Sizing (Performance)</h3>
+                    <div class="space-y-3 text-sm text-gray-700 bg-secondary p-3 rounded-lg">
+                        <p>Performance (8c/16GiB Base) $\rightarrow$ <span id="tidb-qps-base" class="font-mono text-primary">...</span> QPS</p>
+                        <p>Adjusted Performance (Selected Size) $\rightarrow$ <span id="tidb-qps-adjusted" class="font-mono text-primary">...</span> QPS</p>
+                        <p class="mt-2">Formula: $\lceil \text{Expected QPS} \div \text{Adjusted QPS per Node} \rceil$</p>
+                        <p class="mt-2" id="tidb-qps-formula"></p>
+                        <!-- Removed old simple result line -->
+                    </div>
+                    <!-- NEW STYLED RESULT BOX for TiDB -->
+                    <p class="bg-indigo-100 p-3 rounded-lg font-bold text-indigo-700 text-xl text-center mt-3">
+                        Recommended TiDB Nodes: <span id="tidb-final-result" class="text-3xl ml-2">...</span>
+                    </p>
+
+
+                    <!-- TiFlash Sizing -->
+                    <h3 class="font-bold text-lg text-gray-800 pt-6 border-b pb-2 mb-3">TiFlash Node Sizing (For Analytical Workloads)</h3>
+                    <p class="bg-blue-100 p-3 rounded-lg font-bold text-blue-700 text-xl text-center">
+                        Minimum TiFlash Nodes: <span id="tiflash-final-result" class="text-3xl ml-2">2</span>
+                    </p>
+                    <p class="text-xs text-gray-500 mt-1">At least two nodes are recommended for high availability.</p>
+                </div>
+            </div>
+
+            <!-- Total Resources Summary -->
+            <div class="lg:col-span-3 card bg-white p-6 rounded-xl border border-gray-200 mt-8">
+                <h2 class="text-2xl font-semibold mb-4 text-primary border-b pb-3">4. Cluster Summary</h2>
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead>
+                        <tr class="bg-gray-50">
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Component</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">vCPU (per Node)</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Memory (per Node)</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Storage (per Node)</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Count</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total vCPU</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-200">
+                        <!-- TiDB Row -->
+                        <tr id="summary-tidb" class="hover:bg-gray-50 transition duration-150"></tr>
+                        <!-- TiKV Row -->
+                        <tr id="summary-tikv" class="hover:bg-gray-50 transition duration-150"></tr>
+                        <!-- TiFlash Row -->
+                        <tr id="summary-tiflash" class="hover:bg-gray-50 transition duration-150"></tr>
+                        <!-- Total Row -->
+                        <tr class="bg-gray-100 font-bold text-gray-900">
+                            <td colspan="5" class="px-6 py-4 whitespace-nowrap text-right">TOTAL CLUSTER vCPU:</td>
+                            <td id="summary-total-cpu" class="px-6 py-4 whitespace-nowrap text-left text-xl text-primary">0</td>
+                        </tr>
+                    </tbody>
+                </table>
+                <p class="text-xs text-gray-500 mt-4">
+                    *The table shows recommended baseline specs. TiFlash specs (16vCPU, 128GiB, 4TB NVMe) are fixed minimums from the example text.
+                </p>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        // Constants from the provided text
+        const TIKV_MAX_CAPACITY_GIB = 4096; // 4 TB (4096 GiB) for an 8 vCPU, 64 GiB TiKV node
+        const TIKV_COMPRESSION_RATIO = 0.4;
+        const TIKV_USAGE_RATIO = 0.8;
+        const TIKV_REPLICAS = 3;
+        const AZ_MULTIPLIER = 3;
+        const TIKV_BASE_VCPU = 8;
+        const TIKV_BASE_MEMORY = 32;
+
+        // Performance data (QPS per node for the 8c/32GiB TiKV and 8c/16GiB TiDB base nodes)
+        const TIKV_PERFORMANCE = {
+            Read: { P95_100: 28000, P99_300: 14000, P99_100: 7000 },
+            Mixed: { P95_100: 17800, P99_300: 8900, P99_100: 4450 },
+            Write: { P95_100: 14500, P99_300: 7250, P99_100: 3625 }
+        };
+
+        const TIDB_PERFORMANCE = {
+            Read: { P95_100: 18900, P99_300: 9450, P99_100: 6300 },
+            Mixed: { P95_100: 15500, P99_300: 7750, P99_100: 5200 },
+            Write: { P95_100: 18000, P99_300: 9000, P99_100: 6000 }
+        };
+
+        /**
+         * Calculates the total cluster sizing based on user inputs.
+         */
+        function calculate() {
+            // 1. Get User Inputs
+            const dumpSizeTiB = parseFloat(document.getElementById('dumpSize').value) || 0;
+            const expectedQPS = parseFloat(document.getElementById('expectedQPS').value) || 0;
+            const workloadType = document.getElementById('workloadType').value;
+            const latencyTarget = document.getElementById('latencyTarget').value;
+            const nodeSize = document.getElementById('nodeSize').value;
+
+            // Determine scaling factor and specs
+            let scalingFactor = 1;
+            let tikvVcpu = TIKV_BASE_VCPU;
+            let tikvMemory = TIKV_BASE_MEMORY;
+            let tidbVcpu = TIKV_BASE_VCPU; // Reusing 8vCPU base for simplicity, but will be 16GiB for TiDB
+            let tidbMemory = 16;
+
+            if (nodeSize === '16c') {
+                scalingFactor = 2;
+                tikvVcpu = 16;
+                tikvMemory = 64;
+                tidbVcpu = 16;
+                tidbMemory = 32;
+            }
+
+            // --- TiKV Node Calculation ---
+
+            // A. Estimate TiKV node number according to data volume
+            let tikvNodeDataRaw = 0;
+            let tikvNodeDataFinal = 0;
+            
+            // Convert capacity to TiB for formula consistency
+            const tikvCapacityTiB = TIKV_MAX_CAPACITY_GIB / 1024; // 4096 GiB / 1024 = 4 TiB
+
+            if (dumpSizeTiB > 0) {
+                // node num = ceil(size of your MySQL dump file * TiKV compression ratio * the number of replicas ÷ TiKV storage usage ratio ÷ one TiKV capacity ÷ 3) * 3
+                tikvNodeDataRaw = (dumpSizeTiB * TIKV_COMPRESSION_RATIO * TIKV_REPLICAS) / (TIKV_USAGE_RATIO * tikvCapacityTiB * AZ_MULTIPLIER);
+                tikvNodeDataFinal = Math.ceil(tikvNodeDataRaw) * AZ_MULTIPLIER;
+            } else {
+                // If no data size is provided, assume minimum 3 nodes as a baseline for 3 AZ
+                tikvNodeDataFinal = AZ_MULTIPLIER;
+            }
+
+            document.getElementById('tikv-data-formula').textContent = 
+                `Calculation: $\\lceil ${dumpSizeTiB} \\times 0.4 \\times 3 \\div 0.8 \\div 4 \\div 3 \\rceil \\times 3 = \\lceil ${tikvNodeDataRaw.toFixed(2)} \\rceil \\times 3 = ${tikvNodeDataFinal}$`;
+            document.getElementById('tikv-data-result').textContent = tikvNodeDataFinal;
+
+
+            // B. Estimate TiKV node number according to expected performance (QPS)
+            let tikvQPSPerNodeBase = TIKV_PERFORMANCE[workloadType][latencyTarget];
+            let tikvQPSPerNodeAdjusted = tikvQPSPerNodeBase * scalingFactor;
+            
+            let tikvNodePerfRaw = 0;
+            let tikvNodePerfNeeded = 0;
+            let tikvNodePerfFinal = 0;
+            
+            if (expectedQPS > 0 && tikvQPSPerNodeAdjusted > 0) {
+                 // Formula: ceil(expectedQPS / adjustedQPS)
+                tikvNodePerfNeeded = expectedQPS / tikvQPSPerNodeAdjusted;
+                // Final node count must be a multiple of 3 (multiple of 3 logic is applied to the final result)
+                tikvNodePerfFinal = Math.ceil(tikvNodePerfNeeded / AZ_MULTIPLIER) * AZ_MULTIPLIER;
+            } else {
+                // If no QPS, assume minimum 3 nodes as a baseline for 3 AZ
+                tikvNodePerfFinal = AZ_MULTIPLIER;
+            }
+
+            document.getElementById('tikv-qps-base').textContent = tikvQPSPerNodeBase.toLocaleString();
+            document.getElementById('tikv-qps-adjusted').textContent = tikvQPSPerNodeAdjusted.toLocaleString();
+            document.getElementById('tikv-qps-formula').textContent = 
+                `Calculation: $\\lceil ${expectedQPS} \\div ${tikvQPSPerNodeAdjusted} \\div 3 \\rceil \\times 3 = \\lceil ${tikvNodePerfNeeded.toFixed(2)} \\div 3 \\rceil \\times 3 = ${tikvNodePerfFinal}$`;
+            document.getElementById('tikv-perf-result').textContent = tikvNodePerfFinal;
+
+
+            // C. Final TiKV Node Count (Larger of the two)
+            const tikvFinalNodes = Math.max(tikvNodeDataFinal, tikvNodePerfFinal);
+            document.getElementById('tikv-final-result').textContent = tikvFinalNodes;
+
+            // --- TiDB Node Calculation ---
+
+            // Estimate TiDB node number according to expected performance (QPS)
+            let tidbQPSPerNodeBase = TIDB_PERFORMANCE[workloadType][latencyTarget];
+            let tidbQPSPerNodeAdjusted = tidbQPSPerNodeBase * scalingFactor;
+            
+            let tidbNodeFinal = 1; // Minimum 1 for a cluster
+
+            if (expectedQPS > 0 && tidbQPSPerNodeAdjusted > 0) {
+                // Formula: ceil(expectedQPS / adjustedQPS)
+                tidbNodeFinal = Math.ceil(expectedQPS / tidbQPSPerNodeAdjusted);
+                // TiDB does not have a strict *3 multiplier based on the text example (50000/15500 = 4)
+            }
+             // Ensure minimum 2 nodes for high availability, as 1 node is never recommended in production.
+            tidbNodeFinal = Math.max(2, tidbNodeFinal); 
+
+
+            document.getElementById('tidb-qps-base').textContent = tidbQPSPerNodeBase.toLocaleString();
+            document.getElementById('tidb-qps-adjusted').textContent = tidbQPSPerNodeAdjusted.toLocaleString();
+            document.getElementById('tidb-qps-formula').textContent = 
+                `Calculation: $\\lceil ${expectedQPS} \\div ${tidbQPSPerNodeAdjusted} \\rceil = ${tidbNodeFinal}$`;
+            // document.getElementById('tidb-final-result').textContent = tidbNodeFinal; // Removed from here
+
+            // --- TiFlash Node Sizing (Fixed) ---
+            const tiflashFinalNodes = 2; // At least two TiFlash nodes (fixed value)
+
+            // --- Update Summary Table ---
+            updateSummaryTable(tidbNodeFinal, tikvFinalNodes, tiflashFinalNodes, tidbVcpu, tidbMemory, tikvVcpu, tikvMemory);
+            
+            // Re-render LaTeX math
+            renderMathJax();
+        }
+
+        /**
+         * Updates the summary table with the final calculated results.
+         */
+        function updateSummaryTable(tidbCount, tikvCount, tiflashCount, tidbVcpu, tidbMemory, tikvVcpu, tikvMemory) {
+            
+            // TiFlash has fixed recommended specs
+            const tiflashVcpu = 16;
+            const tiflashMemory = 128;
+            const tiflashStorage = '4 TB NVMe';
+
+            // TiDB Row
+            const tidbRow = `
+                <td class="px-6 py-4 whitespace-nowrap font-medium">TiDB</td>
+                <td class="px-6 py-4 whitespace-nowrap">${tidbVcpu}</td>
+                <td class="px-6 py-4 whitespace-nowrap">${tidbMemory} GiB</td>
+                <td class="px-6 py-4 whitespace-nowrap">N/A</td>
+                <td class="px-6 py-4 whitespace-nowrap">${tidbCount}</td>
+                <td class="px-6 py-4 whitespace-nowrap">${tidbVcpu * tidbCount}</td>
+            `;
+            document.getElementById('summary-tidb').innerHTML = tidbRow;
+
+            // TiKV Row
+            const tikvRow = `
+                <td class="px-6 py-4 whitespace-nowrap font-medium">TiKV</td>
+                <td class="px-6 py-4 whitespace-nowrap">${tikvVcpu}</td>
+                <td class="px-6 py-4 whitespace-nowrap">${tikvMemory} GiB</td>
+                <td class="px-6 py-4 whitespace-nowrap">4 TB NVMe</td>
+                <td class="px-6 py-4 whitespace-nowrap">${tikvCount}</td>
+                <td class="px-6 py-4 whitespace-nowrap">${tikvVcpu * tikvCount}</td>
+            `;
+            document.getElementById('summary-tikv').innerHTML = tikvRow;
+
+            // TiFlash Row
+            const tiflashRow = `
+                <td class="px-6 py-4 whitespace-nowrap font-medium">TiFlash</td>
+                <td class="px-6 py-4 whitespace-nowrap">${tiflashVcpu}</td>
+                <td class="px-6 py-4 whitespace-nowrap">${tiflashMemory} GiB</td>
+                <td class="px-6 py-4 whitespace-nowrap">${tiflashStorage}</td>
+                <td class="px-6 py-4 whitespace-nowrap">${tiflashCount}</td>
+                <td class="px-6 py-4 whitespace-nowrap">${tiflashVcpu * tiflashCount}</td>
+            `;
+            document.getElementById('summary-tiflash').innerHTML = tiflashRow;
+
+            // Total vCPU
+            const totalVcpu = (tidbVcpu * tidbCount) + (tikvVcpu * tikvCount) + (tiflashVcpu * tiflashCount);
+            document.getElementById('summary-total-cpu').textContent = totalVcpu;
+
+            // Also update the final TiDB result box (outside the table)
+            document.getElementById('tidb-final-result').textContent = tidbCount;
+        }
+
+        // --- MathJax Configuration for LaTeX Rendering ---
+        // This is needed to properly render the mathematical formulas provided in the text.
+        function renderMathJax() {
+            // Check that MathJax is loaded and typeset function is available before calling it
+            if (window.MathJax && typeof MathJax.typeset === 'function') {
+                MathJax.typeset();
+            }
+        }
+
+        window.onload = function() {
+            // 1. Define MathJax configuration BEFORE loading the script.
+            // Using the startup.ready callback ensures the initial typesetting runs
+            // only when MathJax is fully initialized, fixing the TypeError.
+            window.MathJax = {
+                tex: {
+                    inlineMath: [['$', '$'], ['\\(', '\\)']]
+                },
+                startup: {
+                    ready: () => {
+                        // This must be called to complete the MathJax initialization process
+                        MathJax.startup.defaultReady(); 
+                        calculate(); // Run initial calculation (which calls renderMathJax)
+                    }
+                }
+            };
+
+            // 2. Dynamically load MathJax for LaTeX rendering
+            const script = document.createElement('script');
+            script.src = "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js";
+            script.id = "MathJax-script";
+            script.async = true;
+            document.head.appendChild(script);
+
+            // The initial calculate() call is now controlled by MathJax's startup.ready event.
+        };
+
+    </script>
+</body>
+</html>
